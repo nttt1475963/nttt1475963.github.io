@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>TimeSheet</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+body {
+  font-family: Arial;
+  background: #f5f6fa;
+  padding: 20px;
+}
+
+h1 { margin-bottom: 10px; }
+
+button {
+  padding: 8px 12px;
+  border: none;
+  background: #0984e3;
+  color: white;
+  cursor: pointer;
+  border-radius: 5px;
+  margin: 5px;
+}
+
+.tabs button { background: #636e72; }
+.active-tab { background: #0984e3 !important; }
+
+input {
+  padding: 8px;
+  margin: 5px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 20px;
+  background: white;
+}
+
+th, td {
+  border: 1px solid #ddd;
+  padding: 10px;
+  text-align: center;
+}
+
+th {
+  background: #0984e3;
+  color: white;
+}
+
+.hidden { display: none; }
+
+.card {
+  background: white;
+  padding: 15px;
+  margin-top: 20px;
+  border-radius: 10px;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+</style>
+</head>
+
+<body>
+
+<h1>⏱ Employee Time Tracking</h1>
+
+<!-- LOGIN -->
+<div id="loginBox">
+  <input id="username" placeholder="Enter name">
+  <button onclick="login()">Login</button>
+</div>
+
+<div id="app" class="hidden">
+
+<div class="tabs">
+  <button onclick="showTab('attendance')" class="active-tab">Attendance</button>
+  <button onclick="showTab('dashboard')">Dashboard</button>
+</div>
+
+<!-- ATTENDANCE -->
+<div id="attendanceTab">
+<input type="text" id="name" disabled>
+<input type="date" id="filterDate" onchange="updateUI()">
+
+<br>
+
+<button onclick="checkIn()">Check In</button>
+<button onclick="checkOut()">Check Out</button>
+
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Date</th>
+<th>Check-in</th>
+<th>Check-out</th>
+<th>Total</th>
+<th>Delete</th>
+</tr>
+</thead>
+<tbody id="log"></tbody>
+</table>
+</div>
+
+<!-- DASHBOARD -->
+<div id="dashboardTab" class="hidden">
+
+<div class="card">
+<h3 id="reportTitle"></h3>
+</div>
+
+<div class="dashboard-grid">
+
+<div class="card">
+<h3>Daily Hours</h3>
+<canvas id="dayChart"></canvas>
+</div>
+
+<div class="card">
+<h3>Monthly Hours</h3>
+<canvas id="monthChart"></canvas>
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+<script>
+let data = JSON.parse(localStorage.getItem("chamcong")) || [];
+
+function saveData() {
+  localStorage.setItem("chamcong", JSON.stringify(data));
+}
+
+// LOGIN
+function login() {
+  let name = document.getElementById("username").value;
+  if (!name) return alert("Enter name");
+  localStorage.setItem("user", name);
+  location.reload();
+}
+
+let currentUser = localStorage.getItem("user");
+
+if (currentUser) {
+  document.getElementById("loginBox").style.display = "none";
+  document.getElementById("app").classList.remove("hidden");
+  document.getElementById("name").value = currentUser;
+}
+
+// TAB
+function showTab(tab) {
+  document.getElementById("attendanceTab").classList.add("hidden");
+  document.getElementById("dashboardTab").classList.add("hidden");
+  document.getElementById(tab + "Tab").classList.remove("hidden");
+
+  if (tab === "dashboard") updateCharts();
+}
+
+// FORMAT
+function formatDate(date) {
+  return new Date(date).toLocaleDateString();
+}
+
+function formatTime(date) {
+  return new Date(date).toLocaleTimeString();
+}
+
+function formatDuration(ms) {
+  let s = Math.floor(ms / 1000);
+  let h = Math.floor(s / 3600);
+  let m = Math.floor((s % 3600) / 60);
+  let sec = s % 60;
+  return `${h}h ${m}m ${sec}s`;
+}
+
+// CHECK
+function checkIn() {
+  data.push({ name: currentUser, checkin: new Date() });
+  saveData();
+  updateUI();
+}
+
+function checkOut() {
+  let r = data.find(d => d.name === currentUser && !d.checkout);
+  if (!r) return alert("No check-in!");
+
+  r.checkout = new Date();
+  r.totalMs = new Date(r.checkout) - new Date(r.checkin);
+
+  saveData();
+  updateUI();
+}
+
+// UI
+function updateUI() {
+  let log = document.getElementById("log");
+  log.innerHTML = "";
+
+  let filterDate = document.getElementById("filterDate").value;
+
+  data.forEach((d, i) => {
+    if (d.name !== currentUser) return;
+
+    let dateStr = new Date(d.checkin).toISOString().slice(0,10);
+    if (filterDate && filterDate !== dateStr) return;
+
+    let tr = document.createElement("tr");
+
+    tr.innerHTML = `
+      <td>${d.name}</td>
+      <td>${formatDate(d.checkin)}</td>
+      <td>${formatTime(d.checkin)}</td>
+      <td>${d.checkout ? formatTime(d.checkout) : ""}</td>
+      <td>${d.totalMs ? formatDuration(d.totalMs) : ""}</td>
+      <td><button onclick="del(${i})">X</button></td>
+    `;
+
+    log.appendChild(tr);
+  });
+}
+
+function del(i) {
+  data.splice(i, 1);
+  saveData();
+  updateUI();
+}
+
+// DEFAULT TODAY
+document.getElementById("filterDate").value =
+  new Date().toISOString().slice(0,10);
+
+// CHART
+let dayChart, monthChart;
+
+function updateCharts() {
+
+  document.getElementById("reportTitle").innerText =
+    "Work Time Report of " + currentUser;
+
+  let dayMap = {};
+  let monthMap = {};
+
+  data.forEach(d => {
+    if (d.name !== currentUser || !d.totalMs) return;
+
+    let date = new Date(d.checkin);
+    let day = date.toISOString().slice(0,10);
+    let month = date.toISOString().slice(0,7);
+
+    dayMap[day] = (dayMap[day] || 0) + d.totalMs;
+    monthMap[month] = (monthMap[month] || 0) + d.totalMs;
+  });
+
+  let dayLabels = Object.keys(dayMap);
+  let dayData = Object.values(dayMap).map(v => v / 3600000);
+
+  let monthLabels = Object.keys(monthMap);
+  let monthData = Object.values(monthMap).map(v => v / 3600000);
+
+  if (dayChart) dayChart.destroy();
+  if (monthChart) monthChart.destroy();
+
+  dayChart = new Chart(document.getElementById("dayChart"), {
+    type: "bar",
+    data: {
+      labels: dayLabels,
+      datasets: [{
+        label: "Hours",
+        data: dayData,
+        barThickness: 20
+      }]
+    }
+  });
+
+  monthChart = new Chart(document.getElementById("monthChart"), {
+    type: "bar",
+    data: {
+      labels: monthLabels,
+      datasets: [{
+        label: "Hours",
+        data: monthData,
+        barThickness: 20
+      }]
+    }
+  });
+}
+
+updateUI();
+</script>
+
+</body>
+</html>
